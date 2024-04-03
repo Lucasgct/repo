@@ -71,8 +71,7 @@ public class AdjacencyMatrixAggregationBuilder extends AbstractAggregationBuilde
 
     private static final ParseField SEPARATOR_FIELD = new ParseField("separator");
     private static final ParseField FILTERS_FIELD = new ParseField("filters");
-
-    public static final ParseField SHOW_ONLY_INTERSECTING = new ParseField("show_only_intersecting");
+    private static final ParseField SHOW_ONLY_INTERSECTING = new ParseField("show_only_intersecting");
 
     private List<KeyedFilter> filters;
     private boolean showOnlyIntersecting = false;
@@ -86,7 +85,7 @@ public class AdjacencyMatrixAggregationBuilder extends AbstractAggregationBuilde
         PARSER.declareString(AdjacencyMatrixAggregationBuilder::separator, SEPARATOR_FIELD);
         PARSER.declareNamedObjects(AdjacencyMatrixAggregationBuilder::setFiltersAsList, KeyedFilter.PARSER, FILTERS_FIELD);
         PARSER.declareBoolean(
-            AdjacencyMatrixAggregationBuilder::showOnlyIntersecting,
+            AdjacencyMatrixAggregationBuilder::setShowOnlyIntersecting,
             AdjacencyMatrixAggregationBuilder.SHOW_ONLY_INTERSECTING
         );
     }
@@ -145,6 +144,22 @@ public class AdjacencyMatrixAggregationBuilder extends AbstractAggregationBuilde
         super(name);
         this.separator = separator;
         setFiltersAsMap(filters);
+    }
+
+    /**
+     * @param name
+     *            the name of this aggregation
+     * @param filters
+     *            the filters and their key to use with this aggregation.
+     * @param showOnlyIntersecting
+     *            show only the buckets that intersection multiple documents
+     */
+    public AdjacencyMatrixAggregationBuilder(
+        String name,
+        Map<String, QueryBuilder> filters,
+        boolean showOnlyIntersecting
+    ) {
+        this(name, DEFAULT_SEPARATOR, filters, showOnlyIntersecting);
     }
 
     /**
@@ -218,7 +233,7 @@ public class AdjacencyMatrixAggregationBuilder extends AbstractAggregationBuilde
         return this;
     }
 
-    public AdjacencyMatrixAggregationBuilder showOnlyIntersecting(boolean showOnlyIntersecting) {
+    public AdjacencyMatrixAggregationBuilder setShowOnlyIntersecting(boolean showOnlyIntersecting) {
         this.showOnlyIntersecting = showOnlyIntersecting;
         return this;
     }
@@ -268,7 +283,7 @@ public class AdjacencyMatrixAggregationBuilder extends AbstractAggregationBuilde
         if (modified) {
             return new AdjacencyMatrixAggregationBuilder(name).separator(separator)
                 .setFiltersAsList(rewrittenFilters)
-                .showOnlyIntersecting(showOnlyIntersecting);
+                .setShowOnlyIntersecting(showOnlyIntersecting);
         }
         return this;
     }
