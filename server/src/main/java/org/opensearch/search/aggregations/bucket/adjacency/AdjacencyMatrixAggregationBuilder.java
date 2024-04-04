@@ -154,11 +154,7 @@ public class AdjacencyMatrixAggregationBuilder extends AbstractAggregationBuilde
      * @param showOnlyIntersecting
      *            show only the buckets that intersection multiple documents
      */
-    public AdjacencyMatrixAggregationBuilder(
-        String name,
-        Map<String, QueryBuilder> filters,
-        boolean showOnlyIntersecting
-    ) {
+    public AdjacencyMatrixAggregationBuilder(String name, Map<String, QueryBuilder> filters, boolean showOnlyIntersecting) {
         this(name, DEFAULT_SEPARATOR, filters, showOnlyIntersecting);
     }
 
