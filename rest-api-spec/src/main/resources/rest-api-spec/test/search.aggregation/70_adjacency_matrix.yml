@@ -132,6 +132,7 @@ setup:
   - skip:
       version: " - 2.13.99"
       reason: "show_only_intersecting was added in 2.14"
+
   - do:
       search:
         index: test
