@@ -26,6 +26,7 @@ import org.opensearch.threadpool.ThreadPool;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -61,6 +62,7 @@ public class RemoteFsTimestampAwareTranslog extends RemoteFsTranslog {
     private final Map<String, Tuple<Long, Long>> oldFormatMetadataFileGenerationMap;
     private final Map<String, Tuple<Long, Long>> oldFormatMetadataFilePrimaryTermMap;
     private final AtomicLong minPrimaryTermInRemote = new AtomicLong(Long.MAX_VALUE);
+    private long lastTimestampOfMetadataDeletionOnRemote = System.currentTimeMillis();
 
     public RemoteFsTimestampAwareTranslog(
         TranslogConfig config,
@@ -135,13 +137,22 @@ public class RemoteFsTimestampAwareTranslog extends RemoteFsTranslog {
 
         // This is to ensure that after the permits are acquired during primary relocation, there are no further modification on remote
         // store.
-        if (startedPrimarySupplier.getAsBoolean() == false || pauseSync.get()) {
+        if ((indexDeleted == false && startedPrimarySupplier.getAsBoolean() == false) || pauseSync.get()) {
             return;
         }
 
         // This is to fail fast and avoid listing md files un-necessarily.
         if (indexDeleted == false && RemoteStoreUtils.isPinnedTimestampStateStale()) {
-            logger.warn("Skipping remote segment store garbage collection as last fetch of pinned timestamp is stale");
+            logger.warn("Skipping remote translog garbage collection as last fetch of pinned timestamp is stale");
+            return;
+        }
+
+        // This code block ensures parity with RemoteFsTranslog. Without this, we will end up making list translog metadata
+        // call in each invocation of trimUnreferencedReaders
+        if (indexDeleted == false
+            && (System.currentTimeMillis() - lastTimestampOfMetadataDeletionOnRemote <= RemoteStoreSettings
+                .getPinnedTimestampsLookbackInterval()
+                .millis() * 2)) {
             return;
         }
 
@@ -158,7 +169,7 @@ public class RemoteFsTimestampAwareTranslog extends RemoteFsTranslog {
                 List<String> metadataFiles = blobMetadata.stream().map(BlobMetadata::name).collect(Collectors.toList());
 
                 try {
-                    if (metadataFiles.size() <= 1) {
+                    if (indexDeleted == false && metadataFiles.size() <= 1) {
                         logger.debug("No stale translog metadata files found");
                         remoteGenerationDeletionPermits.release(REMOTE_DELETION_PERMITS);
                         return;
@@ -166,16 +177,12 @@ public class RemoteFsTimestampAwareTranslog extends RemoteFsTranslog {
 
                     // Check last fetch status of pinned timestamps. If stale, return.
                     if (indexDeleted == false && RemoteStoreUtils.isPinnedTimestampStateStale()) {
-                        logger.warn("Skipping remote segment store garbage collection as last fetch of pinned timestamp is stale");
+                        logger.warn("Skipping remote translog garbage collection as last fetch of pinned timestamp is stale");
                         remoteGenerationDeletionPermits.release(REMOTE_DELETION_PERMITS);
                         return;
                     }
 
-                    List<String> metadataFilesToBeDeleted = getMetadataFilesToBeDeleted(
-                        metadataFiles,
-                        metadataFilePinnedTimestampMap,
-                        logger
-                    );
+                    List<String> metadataFilesToBeDeleted = getMetadataFilesToBeDeleted(metadataFiles, indexDeleted);
 
                     // If index is not deleted, make sure to keep latest metadata file
                     if (indexDeleted == false) {
@@ -194,21 +201,26 @@ public class RemoteFsTimestampAwareTranslog extends RemoteFsTranslog {
                     metadataFilesNotToBeDeleted.removeAll(metadataFilesToBeDeleted);
 
                     logger.debug(() -> "metadataFilesNotToBeDeleted = " + metadataFilesNotToBeDeleted);
-                    Set<Long> generationsToBeDeleted = getGenerationsToBeDeleted(
+
+                    Map<Long, Set<Long>> primaryTermGenerationsToBeDeletedMap = getGenerationsToBeDeleted(
                         metadataFilesNotToBeDeleted,
                         metadataFilesToBeDeleted,
-                        indexDeleted
+                        indexDeleted ? Long.MAX_VALUE : minRemoteGenReferenced
                     );
 
-                    logger.debug(() -> "generationsToBeDeleted = " + generationsToBeDeleted);
-                    if (generationsToBeDeleted.isEmpty() == false) {
+                    logger.debug(() -> "generationsToBeDeleted = " + primaryTermGenerationsToBeDeletedMap);
+                    if (primaryTermGenerationsToBeDeletedMap.isEmpty() == false) {
                         // Delete stale generations
                         translogTransferManager.deleteGenerationAsync(
-                            primaryTermSupplier.getAsLong(),
-                            generationsToBeDeleted,
+                            primaryTermGenerationsToBeDeletedMap,
                             remoteGenerationDeletionPermits::release
                         );
+                    } else {
+                        remoteGenerationDeletionPermits.release();
+                    }
 
+                    if (metadataFilesToBeDeleted.isEmpty() == false) {
+                        lastTimestampOfMetadataDeletionOnRemote = System.currentTimeMillis();
                         // Delete stale metadata files
                         translogTransferManager.deleteMetadataFilesAsync(
                             metadataFilesToBeDeleted,
@@ -217,11 +229,10 @@ public class RemoteFsTimestampAwareTranslog extends RemoteFsTranslog {
 
                         // Update cache to keep only those metadata files that are not getting deleted
                         oldFormatMetadataFileGenerationMap.keySet().retainAll(metadataFilesNotToBeDeleted);
-
                         // Delete stale primary terms
                         deleteStaleRemotePrimaryTerms(metadataFilesNotToBeDeleted);
                     } else {
-                        remoteGenerationDeletionPermits.release(REMOTE_DELETION_PERMITS);
+                        remoteGenerationDeletionPermits.release();
                     }
                 } catch (Exception e) {
                     remoteGenerationDeletionPermits.release(REMOTE_DELETION_PERMITS);
@@ -237,49 +248,138 @@ public class RemoteFsTimestampAwareTranslog extends RemoteFsTranslog {
         translogTransferManager.listTranslogMetadataFilesAsync(listMetadataFilesListener);
     }
 
-    // Visible for testing
-    protected Set<Long> getGenerationsToBeDeleted(
+    protected Map<Long, Set<Long>> getGenerationsToBeDeleted(
         List<String> metadataFilesNotToBeDeleted,
         List<String> metadataFilesToBeDeleted,
-        boolean indexDeleted
+        long minRemoteGenReferenced
     ) throws IOException {
-        long maxGenerationToBeDeleted = Long.MAX_VALUE;
-
-        if (indexDeleted == false) {
-            maxGenerationToBeDeleted = minRemoteGenReferenced - 1 - indexSettings().getRemoteTranslogExtraKeep();
-        }
-
-        Set<Long> generationsFromMetadataFilesToBeDeleted = new HashSet<>();
-        for (String mdFile : metadataFilesToBeDeleted) {
-            Tuple<Long, Long> minMaxGen = getMinMaxTranslogGenerationFromMetadataFile(mdFile, translogTransferManager);
-            generationsFromMetadataFilesToBeDeleted.addAll(
-                LongStream.rangeClosed(minMaxGen.v1(), minMaxGen.v2()).boxed().collect(Collectors.toList())
-            );
-        }
-
-        Map<String, Tuple<Long, Long>> metadataFileNotToBeDeletedGenerationMap = getGenerationForMetadataFiles(metadataFilesNotToBeDeleted);
-        TreeSet<Tuple<Long, Long>> pinnedGenerations = getOrderedPinnedMetadataGenerations(metadataFileNotToBeDeletedGenerationMap);
-        Set<Long> generationsToBeDeleted = new HashSet<>();
-        for (long generation : generationsFromMetadataFilesToBeDeleted) {
-            // Check if the generation is not referred by metadata file matching pinned timestamps
-            if (generation <= maxGenerationToBeDeleted && isGenerationPinned(generation, pinnedGenerations) == false) {
-                generationsToBeDeleted.add(generation);
-            }
-        }
-        return generationsToBeDeleted;
+        return getGenerationsToBeDeleted(
+            metadataFilesNotToBeDeleted,
+            metadataFilesToBeDeleted,
+            translogTransferManager,
+            oldFormatMetadataFileGenerationMap,
+            oldFormatMetadataFilePrimaryTermMap,
+            minRemoteGenReferenced
+        );
     }
 
-    protected List<String> getMetadataFilesToBeDeleted(List<String> metadataFiles) {
-        return getMetadataFilesToBeDeleted(metadataFiles, metadataFilePinnedTimestampMap, logger);
+    // Visible for testing
+    protected static Map<Long, Set<Long>> getGenerationsToBeDeleted(
+        List<String> metadataFilesNotToBeDeleted,
+        List<String> metadataFilesToBeDeleted,
+        TranslogTransferManager translogTransferManager,
+        Map<String, Tuple<Long, Long>> oldFormatMetadataFileGenerationMap,
+        Map<String, Tuple<Long, Long>> oldFormatMetadataFilePrimaryTermMap,
+        long minRemoteGenReferenced
+    ) throws IOException {
+        Map<Long, Set<String>> generationsFromMetadataFilesToBeDeleted = new HashMap<>();
+        for (String mdFile : metadataFilesToBeDeleted) {
+            Tuple<Long, Long> minMaxGen = getMinMaxTranslogGenerationFromMetadataFile(
+                mdFile,
+                translogTransferManager,
+                oldFormatMetadataFileGenerationMap
+            );
+            for (long generation : LongStream.rangeClosed(minMaxGen.v1(), minMaxGen.v2()).boxed().collect(Collectors.toList())) {
+                if (generationsFromMetadataFilesToBeDeleted.containsKey(generation) == false) {
+                    generationsFromMetadataFilesToBeDeleted.put(generation, new HashSet<>());
+                }
+                generationsFromMetadataFilesToBeDeleted.get(generation).add(mdFile);
+            }
+        }
+
+        Map<String, Tuple<Long, Long>> metadataFileNotToBeDeletedGenerationMap = new HashMap<>();
+        for (String mdFile : metadataFilesNotToBeDeleted) {
+            Tuple<Long, Long> minMaxGen = getMinMaxTranslogGenerationFromMetadataFile(
+                mdFile,
+                translogTransferManager,
+                oldFormatMetadataFileGenerationMap
+            );
+            metadataFileNotToBeDeletedGenerationMap.put(mdFile, minMaxGen);
+            List<Long> generations = LongStream.rangeClosed(minMaxGen.v1(), minMaxGen.v2()).boxed().collect(Collectors.toList());
+            for (Long generation : generations) {
+                if (generationsFromMetadataFilesToBeDeleted.containsKey(generation)) {
+                    generationsFromMetadataFilesToBeDeleted.get(generation).add(mdFile);
+                }
+            }
+        }
+
+        TreeSet<Tuple<Long, Long>> pinnedGenerations = getOrderedPinnedMetadataGenerations(metadataFileNotToBeDeletedGenerationMap);
+        Map<Long, Set<Long>> generationsToBeDeletedToPrimaryTermRangeMap = new HashMap<>();
+        for (long generation : generationsFromMetadataFilesToBeDeleted.keySet()) {
+            // Check if the generation is not referred by metadata file matching pinned timestamps
+            // The check with minRemoteGenReferenced is redundant but kept as to make sure we don't delete generations
+            // that are not persisted in remote segment store yet.
+            if (generation < minRemoteGenReferenced && isGenerationPinned(generation, pinnedGenerations) == false) {
+                generationsToBeDeletedToPrimaryTermRangeMap.put(
+                    generation,
+                    getPrimaryTermRange(
+                        generationsFromMetadataFilesToBeDeleted.get(generation),
+                        translogTransferManager,
+                        oldFormatMetadataFilePrimaryTermMap
+                    )
+                );
+            }
+        }
+        return getPrimaryTermToGenerationsMap(generationsToBeDeletedToPrimaryTermRangeMap);
+    }
+
+    protected static Map<Long, Set<Long>> getPrimaryTermToGenerationsMap(Map<Long, Set<Long>> generationsToBeDeletedToPrimaryTermRangeMap) {
+        Map<Long, Set<Long>> primaryTermToGenerationsMap = new HashMap<>();
+        for (Map.Entry<Long, Set<Long>> entry : generationsToBeDeletedToPrimaryTermRangeMap.entrySet()) {
+            for (Long primaryTerm : entry.getValue()) {
+                if (primaryTermToGenerationsMap.containsKey(primaryTerm) == false) {
+                    primaryTermToGenerationsMap.put(primaryTerm, new HashSet<>());
+                }
+                primaryTermToGenerationsMap.get(primaryTerm).add(entry.getKey());
+            }
+        }
+        return primaryTermToGenerationsMap;
+    }
+
+    protected static Set<Long> getPrimaryTermRange(
+        Set<String> metadataFiles,
+        TranslogTransferManager translogTransferManager,
+        Map<String, Tuple<Long, Long>> oldFormatMetadataFilePrimaryTermMap
+    ) throws IOException {
+        Tuple<Long, Long> primaryTermRange = new Tuple<>(Long.MIN_VALUE, Long.MAX_VALUE);
+        for (String metadataFile : metadataFiles) {
+            Tuple<Long, Long> primaryTermRangeForMdFile = getMinMaxPrimaryTermFromMetadataFile(
+                metadataFile,
+                translogTransferManager,
+                oldFormatMetadataFilePrimaryTermMap
+            );
+            primaryTermRange = new Tuple<>(
+                Math.max(primaryTermRange.v1(), primaryTermRangeForMdFile.v1()),
+                Math.min(primaryTermRange.v2(), primaryTermRangeForMdFile.v2())
+            );
+            if (primaryTermRange.v1().equals(primaryTermRange.v2())) {
+                break;
+            }
+        }
+        return LongStream.rangeClosed(primaryTermRange.v1(), primaryTermRange.v2()).boxed().collect(Collectors.toSet());
+    }
+
+    protected List<String> getMetadataFilesToBeDeleted(List<String> metadataFiles, boolean indexDeleted) {
+        return getMetadataFilesToBeDeleted(
+            metadataFiles,
+            metadataFilePinnedTimestampMap,
+            minRemoteGenReferenced,
+            Map.of(),
+            indexDeleted,
+            logger
+        );
     }
 
     // Visible for testing
     protected static List<String> getMetadataFilesToBeDeleted(
         List<String> metadataFiles,
         Map<Long, String> metadataFilePinnedTimestampMap,
+        long minRemoteGenReferenced,
+        Map<String, Long> pinnedTimestampsToSkip,
+        boolean indexDeleted,
         Logger logger
     ) {
-        Tuple<Long, Set<Long>> pinnedTimestampsState = RemoteStorePinnedTimestampService.getPinnedTimestamps();
+        Tuple<Long, Set<Long>> pinnedTimestampsState = RemoteStorePinnedTimestampService.getPinnedTimestamps(pinnedTimestampsToSkip);
 
         // Keep files since last successful run of scheduler
         List<String> metadataFilesToBeDeleted = RemoteStoreUtils.filterOutMetadataFilesBasedOnAge(
@@ -312,11 +412,27 @@ public class RemoteFsTimestampAwareTranslog extends RemoteFsTranslog {
             metadataFilesToBeDeleted.size()
         );
 
+        if (indexDeleted == false) {
+            // Filter out metadata files based on minRemoteGenReferenced
+            List<String> metadataFilesContainingMinRemoteGenReferenced = metadataFilesToBeDeleted.stream().filter(md -> {
+                long maxGeneration = TranslogTransferMetadata.getMaxGenerationFromFileName(md);
+                return maxGeneration == -1 || maxGeneration > minRemoteGenReferenced;
+            }).collect(Collectors.toList());
+            metadataFilesToBeDeleted.removeAll(metadataFilesContainingMinRemoteGenReferenced);
+
+            logger.trace(
+                "metadataFilesContainingMinRemoteGenReferenced.size = {}, metadataFilesToBeDeleted based on minRemoteGenReferenced filtering = {}, minRemoteGenReferenced = {}",
+                metadataFilesContainingMinRemoteGenReferenced.size(),
+                metadataFilesToBeDeleted.size(),
+                minRemoteGenReferenced
+            );
+        }
+
         return metadataFilesToBeDeleted;
     }
 
     // Visible for testing
-    protected boolean isGenerationPinned(long generation, TreeSet<Tuple<Long, Long>> pinnedGenerations) {
+    protected static boolean isGenerationPinned(long generation, TreeSet<Tuple<Long, Long>> pinnedGenerations) {
         Tuple<Long, Long> ceilingGenerationRange = pinnedGenerations.ceiling(new Tuple<>(generation, generation));
         if (ceilingGenerationRange != null && generation >= ceilingGenerationRange.v1() && generation <= ceilingGenerationRange.v2()) {
             return true;
@@ -328,7 +444,9 @@ public class RemoteFsTimestampAwareTranslog extends RemoteFsTranslog {
         return false;
     }
 
-    private TreeSet<Tuple<Long, Long>> getOrderedPinnedMetadataGenerations(Map<String, Tuple<Long, Long>> metadataFileGenerationMap) {
+    private static TreeSet<Tuple<Long, Long>> getOrderedPinnedMetadataGenerations(
+        Map<String, Tuple<Long, Long>> metadataFileGenerationMap
+    ) {
         TreeSet<Tuple<Long, Long>> pinnedGenerations = new TreeSet<>((o1, o2) -> {
             if (Objects.equals(o1.v1(), o2.v1()) == false) {
                 return o1.v1().compareTo(o2.v1());
@@ -341,18 +459,10 @@ public class RemoteFsTimestampAwareTranslog extends RemoteFsTranslog {
     }
 
     // Visible for testing
-    protected Map<String, Tuple<Long, Long>> getGenerationForMetadataFiles(List<String> metadataFiles) throws IOException {
-        Map<String, Tuple<Long, Long>> metadataFileGenerationMap = new HashMap<>();
-        for (String metadataFile : metadataFiles) {
-            metadataFileGenerationMap.put(metadataFile, getMinMaxTranslogGenerationFromMetadataFile(metadataFile, translogTransferManager));
-        }
-        return metadataFileGenerationMap;
-    }
-
-    // Visible for testing
-    protected Tuple<Long, Long> getMinMaxTranslogGenerationFromMetadataFile(
+    protected static Tuple<Long, Long> getMinMaxTranslogGenerationFromMetadataFile(
         String metadataFile,
-        TranslogTransferManager translogTransferManager
+        TranslogTransferManager translogTransferManager,
+        Map<String, Tuple<Long, Long>> oldFormatMetadataFileGenerationMap
     ) throws IOException {
         Tuple<Long, Long> minMaxGenerationFromFileName = TranslogTransferMetadata.getMinMaxTranslogGenerationFromFilename(metadataFile);
         if (minMaxGenerationFromFileName != null) {
@@ -472,50 +582,75 @@ public class RemoteFsTimestampAwareTranslog extends RemoteFsTranslog {
         }
     }
 
-    public static void cleanup(TranslogTransferManager translogTransferManager) throws IOException {
-        ActionListener<List<BlobMetadata>> listMetadataFilesListener = new ActionListener<>() {
-            @Override
-            public void onResponse(List<BlobMetadata> blobMetadata) {
-                List<String> metadataFiles = blobMetadata.stream().map(BlobMetadata::name).collect(Collectors.toList());
+    public static void cleanup(
+        TranslogTransferManager translogTransferManager,
+        boolean forceClean,
+        Map<String, Long> pinnedTimestampsToSkip
+    ) throws IOException {
+        if (forceClean) {
+            translogTransferManager.delete();
+        } else {
+            ActionListener<List<BlobMetadata>> listMetadataFilesListener = new ActionListener<>() {
+                @Override
+                public void onResponse(List<BlobMetadata> blobMetadata) {
+                    List<String> metadataFiles = blobMetadata.stream().map(BlobMetadata::name).collect(Collectors.toList());
 
-                try {
-                    if (metadataFiles.isEmpty()) {
-                        staticLogger.debug("No stale translog metadata files found");
-                        return;
+                    try {
+                        if (metadataFiles.isEmpty()) {
+                            staticLogger.debug("No stale translog metadata files found");
+                            return;
+                        }
+                        List<String> metadataFilesToBeDeleted = getMetadataFilesToBeDeleted(
+                            metadataFiles,
+                            new HashMap<>(),
+                            Long.MAX_VALUE,
+                            pinnedTimestampsToSkip,
+                            true,
+                            staticLogger
+                        );
+                        if (metadataFilesToBeDeleted.isEmpty()) {
+                            staticLogger.debug("No metadata files to delete");
+                            return;
+                        }
+                        staticLogger.debug(() -> "metadataFilesToBeDeleted = " + metadataFilesToBeDeleted);
+
+                        // For all the files that we are keeping, fetch min and max generations
+                        List<String> metadataFilesNotToBeDeleted = new ArrayList<>(metadataFiles);
+                        metadataFilesNotToBeDeleted.removeAll(metadataFilesToBeDeleted);
+                        staticLogger.debug(() -> "metadataFilesNotToBeDeleted = " + metadataFilesNotToBeDeleted);
+
+                        Map<Long, Set<Long>> primaryTermGenerationsToBeDeletedMap = getGenerationsToBeDeleted(
+                            metadataFilesNotToBeDeleted,
+                            metadataFilesToBeDeleted,
+                            translogTransferManager,
+                            new HashMap<>(),
+                            new HashMap<>(),
+                            Long.MAX_VALUE
+                        );
+                        translogTransferManager.deleteGenerationAsync(primaryTermGenerationsToBeDeletedMap, () -> {});
+
+                        // Delete stale metadata files
+                        translogTransferManager.deleteMetadataFilesAsync(metadataFilesToBeDeleted, () -> {});
+
+                        // Delete stale primary terms
+                        deleteStaleRemotePrimaryTerms(
+                            metadataFilesNotToBeDeleted,
+                            translogTransferManager,
+                            new HashMap<>(),
+                            new AtomicLong(Long.MAX_VALUE),
+                            staticLogger
+                        );
+                    } catch (Exception e) {
+                        staticLogger.error("Exception while cleaning up metadata and primary terms", e);
                     }
-                    List<String> metadataFilesToBeDeleted = getMetadataFilesToBeDeleted(metadataFiles, new HashMap<>(), staticLogger);
-                    if (metadataFilesToBeDeleted.isEmpty()) {
-                        staticLogger.debug("No metadata files to delete");
-                        return;
-                    }
-                    staticLogger.debug(() -> "metadataFilesToBeDeleted = " + metadataFilesToBeDeleted);
+                }
 
-                    // For all the files that we are keeping, fetch min and max generations
-                    List<String> metadataFilesNotToBeDeleted = new ArrayList<>(metadataFiles);
-                    metadataFilesNotToBeDeleted.removeAll(metadataFilesToBeDeleted);
-                    staticLogger.debug(() -> "metadataFilesNotToBeDeleted = " + metadataFilesNotToBeDeleted);
-
-                    // Delete stale metadata files
-                    translogTransferManager.deleteMetadataFilesAsync(metadataFilesToBeDeleted, () -> {});
-
-                    // Delete stale primary terms
-                    deleteStaleRemotePrimaryTerms(
-                        metadataFilesNotToBeDeleted,
-                        translogTransferManager,
-                        new HashMap<>(),
-                        new AtomicLong(Long.MAX_VALUE),
-                        staticLogger
-                    );
-                } catch (Exception e) {
+                @Override
+                public void onFailure(Exception e) {
                     staticLogger.error("Exception while cleaning up metadata and primary terms", e);
                 }
-            }
-
-            @Override
-            public void onFailure(Exception e) {
-                staticLogger.error("Exception while cleaning up metadata and primary terms", e);
-            }
-        };
-        translogTransferManager.listTranslogMetadataFilesAsync(listMetadataFilesListener);
+            };
+            translogTransferManager.listTranslogMetadataFilesAsync(listMetadataFilesListener);
+        }
     }
 }

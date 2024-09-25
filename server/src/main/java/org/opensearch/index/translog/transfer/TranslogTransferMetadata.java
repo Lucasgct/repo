@@ -119,11 +119,7 @@ public class TranslogTransferMetadata {
         if (generationToPrimaryTermMapper.get() == null || generationToPrimaryTermMapper.get().values().isEmpty()) {
             return -1;
         }
-        Optional<Long> minPrimaryTerm = generationToPrimaryTermMapper.get()
-            .values()
-            .stream()
-            .map(s -> Long.parseLong(s))
-            .min(Long::compareTo);
+        Optional<Long> minPrimaryTerm = generationToPrimaryTermMapper.get().values().stream().map(Long::parseLong).min(Long::compareTo);
         if (minPrimaryTerm.isPresent()) {
             return minPrimaryTerm.get();
         } else {
@@ -167,6 +163,16 @@ public class TranslogTransferMetadata {
         } catch (Exception e) {
             logger.error(() -> new ParameterizedMessage("Exception while getting min and max translog generation from: {}", filename), e);
             return null;
+        }
+    }
+
+    public static long getMaxGenerationFromFileName(String filename) {
+        String[] tokens = filename.split(METADATA_SEPARATOR);
+        try {
+            return RemoteStoreUtils.invertLong(tokens[2]);
+        } catch (Exception e) {
+            logger.error(() -> new ParameterizedMessage("Exception while getting max generation from: {}", filename), e);
+            return -1;
         }
     }
 
