@@ -574,9 +574,9 @@ testClusters {
 
 
     // Add AWS credentials to the keystore
-    keystore 's3.client.default.access_key', '<access_key>'
-    keystore 's3.client.default.secret_key', '<secret_key>'
-    keystore 's3.client.default.session_token', '<session_token>'
+    keystore 's3.client.default.access_key', System.getenv('AWS_ACCESS_KEY_ID')
+    keystore 's3.client.default.secret_key', System.getenv('AWS_SECRET_ACCESS_KEY')
+    keystore 's3.client.default.session_token', System.getenv('AWS_SESSION_TOKEN')
 
      testDistribution = 'archive'
      if (numZones > 1) numberOfZones = numZones
@@ -584,6 +584,11 @@ testClusters {
 ```
 Then run by giving the required plugin as parameter
 ```
+Exporting values to use as system variable. 
+export AWS_ACCESS_KEY_ID=<access_key>
+export AWS_SECRET_ACCESS_KEY=<secret_key>
+export AWS_SESSION_TOKEN=<session_token>
+
 Example: plugin can be 'repository-s3'
 ./gradlew run -PinstalledPlugins="['<plugin>']" --debug-jvm
 
