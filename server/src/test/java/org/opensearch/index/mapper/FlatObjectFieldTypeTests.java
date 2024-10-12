@@ -52,38 +52,38 @@ public class FlatObjectFieldTypeTests extends FieldTypeTestCase {
 
     }
 
-    public void testDirectSubfield() {
+    public void testGetSearchField() {
         {
             MappedFieldType flatParentFieldType = getFlatParentFieldType("field");
 
             // when searching for "foo" in "field", the directSubfield is field._value field
-            String searchFieldName = ((FlatObjectFieldMapper.FlatObjectFieldType) flatParentFieldType).directSubfield();
+            String searchFieldName = ((FlatObjectFieldMapper.FlatObjectFieldType) flatParentFieldType).getSearchField();
             assertEquals("field._value", searchFieldName);
 
             MappedFieldType dynamicMappedFieldType = new FlatObjectFieldMapper.FlatObjectFieldType("bar", flatParentFieldType.name());
             // when searching for "foo" in "field.bar", the directSubfield is field._valueAndPath field
-            String searchFieldNameDocPath = ((FlatObjectFieldMapper.FlatObjectFieldType) dynamicMappedFieldType).directSubfield();
+            String searchFieldNameDocPath = ((FlatObjectFieldMapper.FlatObjectFieldType) dynamicMappedFieldType).getSearchField();
             assertEquals("field._valueAndPath", searchFieldNameDocPath);
         }
         {
             NamedAnalyzer analyzer = new NamedAnalyzer("default", AnalyzerScope.INDEX, null);
             MappedFieldType ft = new FlatObjectFieldMapper.FlatObjectFieldType("field", analyzer);
-            assertEquals("field._value", ((FlatObjectFieldMapper.FlatObjectFieldType) ft).directSubfield());
+            assertEquals("field._value", ((FlatObjectFieldMapper.FlatObjectFieldType) ft).getSearchField());
         }
     }
 
-    public void testRewriteValue() {
+    public void testRewriteSearchValue() {
         MappedFieldType flatParentFieldType = getFlatParentFieldType("field");
 
         // when searching for "foo" in "field", the rewrite value is "foo"
-        String searchValues = ((FlatObjectFieldMapper.FlatObjectFieldType) flatParentFieldType).rewriteValue("foo");
+        String searchValues = ((FlatObjectFieldMapper.FlatObjectFieldType) flatParentFieldType).rewriteSearchValue("foo");
         assertEquals("foo", searchValues);
 
         MappedFieldType dynamicMappedFieldType = new FlatObjectFieldMapper.FlatObjectFieldType("field.bar", flatParentFieldType.name());
 
         // when searching for "foo" in "field.bar", the rewrite value is "field.bar=foo"
-        String searchFieldNameDocPath = ((FlatObjectFieldMapper.FlatObjectFieldType) dynamicMappedFieldType).directSubfield();
-        String searchValuesDocPath = ((FlatObjectFieldMapper.FlatObjectFieldType) dynamicMappedFieldType).rewriteValue("foo");
+        String searchFieldNameDocPath = ((FlatObjectFieldMapper.FlatObjectFieldType) dynamicMappedFieldType).getSearchField();
+        String searchValuesDocPath = ((FlatObjectFieldMapper.FlatObjectFieldType) dynamicMappedFieldType).rewriteSearchValue("foo");
         assertEquals("field.bar=foo", searchValuesDocPath);
     }
 
@@ -92,16 +92,16 @@ public class FlatObjectFieldTypeTests extends FieldTypeTestCase {
         MappedFieldType flatParentFieldType = getFlatParentFieldType("field");
 
         // when searching for "foo" in "field", the term query is directed to search "foo" in field._value field
-        String searchFieldName = ((FlatObjectFieldMapper.FlatObjectFieldType) flatParentFieldType).directSubfield();
-        String searchValues = ((FlatObjectFieldMapper.FlatObjectFieldType) flatParentFieldType).rewriteValue("foo");
+        String searchFieldName = ((FlatObjectFieldMapper.FlatObjectFieldType) flatParentFieldType).getSearchField();
+        String searchValues = ((FlatObjectFieldMapper.FlatObjectFieldType) flatParentFieldType).rewriteSearchValue("foo");
         assertEquals("foo", searchValues);
         assertEquals(new TermQuery(new Term(searchFieldName, searchValues)), flatParentFieldType.termQuery(searchValues, null));
 
         MappedFieldType dynamicMappedFieldType = new FlatObjectFieldMapper.FlatObjectFieldType("field.bar", flatParentFieldType.name());
 
         // when searching for "foo" in "field.bar", the term query is directed to search in field._valueAndPath field
-        String searchFieldNameDocPath = ((FlatObjectFieldMapper.FlatObjectFieldType) dynamicMappedFieldType).directSubfield();
-        String searchValuesDocPath = ((FlatObjectFieldMapper.FlatObjectFieldType) dynamicMappedFieldType).rewriteValue("foo");
+        String searchFieldNameDocPath = ((FlatObjectFieldMapper.FlatObjectFieldType) dynamicMappedFieldType).getSearchField();
+        String searchValuesDocPath = ((FlatObjectFieldMapper.FlatObjectFieldType) dynamicMappedFieldType).rewriteSearchValue("foo");
         assertEquals("field.bar=foo", searchValuesDocPath);
         assertEquals(new TermQuery(new Term(searchFieldNameDocPath, searchValuesDocPath)), dynamicMappedFieldType.termQuery("foo", null));
 
