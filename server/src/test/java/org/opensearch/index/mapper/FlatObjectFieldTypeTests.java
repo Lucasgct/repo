@@ -9,6 +9,7 @@
 package org.opensearch.index.mapper;
 
 import org.apache.lucene.index.Term;
+import org.apache.lucene.search.DocValuesFieldExistsQuery;
 import org.apache.lucene.search.TermQuery;
 import org.opensearch.Version;
 import org.opensearch.cluster.metadata.IndexMetadata;
@@ -114,7 +115,7 @@ public class FlatObjectFieldTypeTests extends FieldTypeTestCase {
         {
             MappedFieldType ft = getFlatParentFieldType("field");
             // when checking on the flat_object field name "field", check if exist in the field mapper names
-            assertEquals(new TermQuery(new Term(FieldNamesFieldMapper.NAME, "field")), ft.existsQuery(null));
+            assertEquals(new DocValuesFieldExistsQuery("field"), ft.existsQuery(null));
 
             // when checking if a subfield within the flat_object, for example, "field.bar", use term query in the flat_object field
             MappedFieldType dynamicMappedFieldType = new FlatObjectFieldMapper.FlatObjectFieldType("field.bar", ft.name());
@@ -128,7 +129,7 @@ public class FlatObjectFieldTypeTests extends FieldTypeTestCase {
                 false,
                 Collections.emptyMap()
             );
-            assertEquals(new TermQuery(new Term(FieldNamesFieldMapper.NAME, "field")), ft.existsQuery(null));
+            assertEquals(new DocValuesFieldExistsQuery("field"), ft.existsQuery(null));
         }
     }
 }
