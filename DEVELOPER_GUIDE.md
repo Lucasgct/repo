@@ -556,7 +556,7 @@ Then, you need to apply patterns for git-secrets, you can install the AWS standa
 git secrets --register-aws
 ```
 
-#### Run remote backed storage from dev environment
+#### Remote Backed Storage
 
 To run the remote backed storage from the dev/local environment - Please do add the below to run.gradle file.
 
