@@ -558,7 +558,7 @@ git secrets --register-aws
 
 #### Remote Backed Storage
 
-To run the remote backed storage from the dev/local environment - Please do add the below to run.gradle file.
+Add the following settings to [gradle/run.gradle](gradle/run.gradle) to enable remote-backed S3 storage in the dev/local environment.
 
 ```
 testClusters {
