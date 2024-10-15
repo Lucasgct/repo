@@ -570,7 +570,7 @@ testClusters {
     setting 'node.attr.remote_store.repository.my-repository.type', '<type>'
     setting 'node.attr.remote_store.repository.my-repository.settings.bucket', '<bucket_name>'
     setting 'node.attr.remote_store.repository.my-repository.settings.base_path', '<base_path>'
-    setting 'node.attr.remote_store.repository.my-repository.settings.region', '<region>'
+    setting 'node.attr.remote_store.repository.my-repository.settings.region', '<region>' # e.g. us-west-2
 
 
     // Add AWS credentials to the keystore
