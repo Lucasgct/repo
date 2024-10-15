@@ -577,10 +577,6 @@ testClusters {
     keystore 's3.client.default.access_key', System.getenv('AWS_ACCESS_KEY_ID')
     keystore 's3.client.default.secret_key', System.getenv('AWS_SECRET_ACCESS_KEY')
     keystore 's3.client.default.session_token', System.getenv('AWS_SESSION_TOKEN')
-
-     testDistribution = 'archive'
-     if (numZones > 1) numberOfZones = numZones
-     if (numNodes > 1) numberOfNodes = numNodes
 ```
 Then run by giving the required plugin as parameter
 ```
