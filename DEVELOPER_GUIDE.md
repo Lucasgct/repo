@@ -590,7 +590,7 @@ export AWS_SECRET_ACCESS_KEY=<secret_key>
 export AWS_SESSION_TOKEN=<session_token>
 
 Example: plugin can be 'repository-s3'
-./gradlew run -PinstalledPlugins="['<plugin>']" --debug-jvm
+./gradlew run -PinstalledPlugins="['repository-s3']"
 
 ```
 
