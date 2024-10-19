@@ -482,6 +482,9 @@ public class IpFieldMapper extends ParametrizedFieldMapper {
         }
     }
 
+    /**
+     * Union over IP address ranges
+     */
     public static class IpMultiRangeQueryBuilder extends MultiRangeQuery.Builder {
         public IpMultiRangeQueryBuilder(String field) {
             super(field, InetAddressPoint.BYTES, 1);
