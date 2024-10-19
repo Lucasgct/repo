@@ -42,7 +42,7 @@ public class SearchIpFieldTermsTests extends OpenSearchSingleNodeTestCase {
         int cidrs = 0;
         int ips = 0;
         List<String> toQuery = new ArrayList<>();
-        for (int i = 0; ips <= 1024 && i < 1000000; i++) {
+        for (int i = 0; ips <= 10240 && cidrs <= 1024 && i < 1000000; i++) {
             final String ip;
             final int prefix;
             if (IPv4_ONLY) {
@@ -56,7 +56,7 @@ public class SearchIpFieldTermsTests extends OpenSearchSingleNodeTestCase {
             bulkRequestBuilder.add(client().prepareIndex(defaultIndexName).setSource(Map.of("addr", ip)));
 
             final String termToQuery;
-            if (cidrs < 1024 - 1 && random().nextBoolean()) {
+            if (random().nextBoolean()) {
                 termToQuery = ip + "/" + prefix;
                 cidrs++;
             } else {

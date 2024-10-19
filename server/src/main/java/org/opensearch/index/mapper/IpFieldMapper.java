@@ -36,6 +36,7 @@ import org.apache.lucene.document.InetAddressPoint;
 import org.apache.lucene.document.SortedSetDocValuesField;
 import org.apache.lucene.document.StoredField;
 import org.apache.lucene.index.SortedSetDocValues;
+import org.apache.lucene.sandbox.search.MultiRangeQuery;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.ConstantScoreQuery;
@@ -273,6 +274,8 @@ public class IpFieldMapper extends ParametrizedFieldMapper {
             failIfNotIndexedAndNoDocValues();
             List<InetAddress> concreteIPs = new ArrayList<>();
             List<Query> ranges = new ArrayList<>();
+            IpMultiRangeQueryBuilder multiRange = new IpMultiRangeQueryBuilder(name());
+            boolean multiRangeIsEmpty = true;
             for (final Object value : values) {
                 if (value instanceof InetAddress) {
                     concreteIPs.add((InetAddress) value);
@@ -281,13 +284,21 @@ public class IpFieldMapper extends ParametrizedFieldMapper {
                     if (strVal.contains("/")) {
                         // the `terms` query contains some prefix queries, so we cannot create a set query
                         // and need to fall back to a disjunction of `term` queries
-                        Query query = termQuery(strVal, context);
+                        // Query query = termQuery(strVal, context);
+                        final Tuple<InetAddress, Integer> cidr = InetAddresses.parseCidr(strVal);
+                        PointRangeQuery query = (PointRangeQuery) InetAddressPoint.newPrefixQuery(name(), cidr.v1(), cidr.v2());
+
                         // would be great to have union on ranges over bare points
-                        ranges.add(query);
+                        // ranges.add(query);
+                        multiRange.add(query.getLowerPoint(), query.getUpperPoint());
+                        multiRangeIsEmpty = false;
                     } else {
                         concreteIPs.add(InetAddresses.forString(strVal));
                     }
                 }
+            }
+            if (!multiRangeIsEmpty) {
+                ranges.add(multiRange.build());
             }
             if (!concreteIPs.isEmpty()) {
                 Supplier<Query> pointsQuery;
@@ -467,6 +478,27 @@ public class IpFieldMapper extends ParametrizedFieldMapper {
                 );
             }
             return DocValueFormat.IP;
+        }
+    }
+
+    public static class IpMultiRangeQueryBuilder extends MultiRangeQuery.Builder {
+        public IpMultiRangeQueryBuilder(String field) {
+            super(field, InetAddressPoint.BYTES, 1);
+        }
+
+        public IpMultiRangeQueryBuilder add(InetAddress lower, InetAddress upper) {
+            add(new MultiRangeQuery.RangeClause(InetAddressPoint.encode(lower), InetAddressPoint.encode(upper)));
+            return this;
+        }
+
+        @Override
+        public MultiRangeQuery build() {
+            return new MultiRangeQuery(field, numDims, bytesPerDim, clauses) {
+                @Override
+                protected String toString(int dimension, byte[] value) {
+                    return InetAddressPoint.decode(value).getHostAddress();
+                }
+            };
         }
     }
 
