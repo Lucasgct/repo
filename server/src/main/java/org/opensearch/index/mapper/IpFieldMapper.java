@@ -51,6 +51,7 @@ import org.opensearch.common.Nullable;
 import org.opensearch.common.collect.Tuple;
 import org.opensearch.common.logging.DeprecationLogger;
 import org.opensearch.common.network.InetAddresses;
+import org.opensearch.common.network.NetworkAddress;
 import org.opensearch.index.fielddata.IndexFieldData;
 import org.opensearch.index.fielddata.ScriptDocValues;
 import org.opensearch.index.fielddata.plain.SortedSetOrdinalsIndexFieldData;
@@ -496,7 +497,7 @@ public class IpFieldMapper extends ParametrizedFieldMapper {
             return new MultiRangeQuery(field, numDims, bytesPerDim, clauses) {
                 @Override
                 protected String toString(int dimension, byte[] value) {
-                    return InetAddressPoint.decode(value).getHostAddress();
+                    return NetworkAddress.format(InetAddressPoint.decode(value));
                 }
             };
         }
