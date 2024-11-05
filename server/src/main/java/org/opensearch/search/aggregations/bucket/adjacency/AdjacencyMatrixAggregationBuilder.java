@@ -32,6 +32,7 @@
 
 package org.opensearch.search.aggregations.bucket.adjacency;
 
+import org.opensearch.Version;
 import org.opensearch.core.ParseField;
 import org.opensearch.core.common.io.stream.StreamInput;
 import org.opensearch.core.common.io.stream.StreamOutput;
@@ -187,7 +188,9 @@ public class AdjacencyMatrixAggregationBuilder extends AbstractAggregationBuilde
         super(in);
         int filtersSize = in.readVInt();
         separator = in.readString();
-        showOnlyIntersecting = in.readBoolean();
+        if (in.getVersion().onOrAfter(Version.V_3_0_0)) {
+            showOnlyIntersecting = in.readBoolean();
+        }
         filters = new ArrayList<>(filtersSize);
         for (int i = 0; i < filtersSize; i++) {
             filters.add(new KeyedFilter(in));
@@ -198,7 +201,9 @@ public class AdjacencyMatrixAggregationBuilder extends AbstractAggregationBuilde
     protected void doWriteTo(StreamOutput out) throws IOException {
         out.writeVInt(filters.size());
         out.writeString(separator);
-        out.writeBoolean(showOnlyIntersecting);
+        if (out.getVersion().onOrAfter(Version.V_3_0_0)) {
+            out.writeBoolean(showOnlyIntersecting);
+        }
         for (KeyedFilter keyedFilter : filters) {
             keyedFilter.writeTo(out);
         }
