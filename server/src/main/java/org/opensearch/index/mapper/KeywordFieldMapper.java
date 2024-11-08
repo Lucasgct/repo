@@ -51,6 +51,7 @@ import org.apache.lucene.search.WildcardQuery;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.automaton.Operations;
 import org.opensearch.OpenSearchException;
+import org.opensearch.common.Explicit;
 import org.opensearch.common.Nullable;
 import org.opensearch.common.lucene.BytesRefs;
 import org.opensearch.common.lucene.Lucene;
@@ -165,6 +166,13 @@ public final class KeywordFieldMapper extends ParametrizedFieldMapper {
             false
         );
 
+        private final Parameter<Explicit<Boolean>> multivalued = Parameter.explicitBoolParam(
+            "multivalued",
+            true,
+            m -> toType(m).multivalued,
+            false
+        );
+
         private final Parameter<Map<String, String>> meta = Parameter.metaParam();
         private final Parameter<Float> boost = Parameter.boostParam();
 
@@ -214,6 +222,7 @@ public final class KeywordFieldMapper extends ParametrizedFieldMapper {
                 normalizer,
                 splitQueriesOnWhitespace,
                 boost,
+                multivalued,
                 meta
             );
         }
@@ -657,6 +666,8 @@ public final class KeywordFieldMapper extends ParametrizedFieldMapper {
 
     private final IndexAnalyzers indexAnalyzers;
 
+    private final Explicit<Boolean> multivalued;
+
     protected KeywordFieldMapper(
         String simpleName,
         FieldType fieldType,
@@ -679,6 +690,7 @@ public final class KeywordFieldMapper extends ParametrizedFieldMapper {
         this.splitQueriesOnWhitespace = builder.splitQueriesOnWhitespace.getValue();
 
         this.indexAnalyzers = builder.indexAnalyzers;
+        this.multivalued = builder.multivalued.getValue();
     }
 
     /**
@@ -687,6 +699,10 @@ public final class KeywordFieldMapper extends ParametrizedFieldMapper {
      */
     public int ignoreAbove() {
         return ignoreAbove;
+    }
+
+    boolean multivalued() {
+        return multivalued.value();
     }
 
     @Override
@@ -776,5 +792,10 @@ public final class KeywordFieldMapper extends ParametrizedFieldMapper {
     @Override
     public ParametrizedFieldMapper.Builder getMergeBuilder() {
         return new Builder(simpleName(), indexAnalyzers).init(this);
+    }
+
+    @Override
+    public boolean isMultivalue() {
+        return multivalued.explicit() && multivalued.value() != null && multivalued.value();
     }
 }
