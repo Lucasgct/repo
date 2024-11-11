@@ -10,13 +10,13 @@
  */
 
 syntax = "proto3";
-package org.opensearch.extensions.proto;
+package org.opensearch.proto;
 
-import "extensions/ExtensionIdentityProto.proto";
-option java_outer_classname = "RegisterRestActionsProto";
+import "org/opensearch/extensions/ExtensionIdentityProto.proto";
 
-message RegisterRestActions {
-  ExtensionIdentity identity = 1;
-  repeated string restActions = 2;
-  repeated string deprecatedRestActions = 3;
+option java_outer_classname = "RegisterTransportActionsProto";
+
+message RegisterTransportActions {
+  org.opensearch.extensions.proto.ExtensionIdentity identity = 1;
+  repeated string transportActions = 2;
 }

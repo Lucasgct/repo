@@ -1,0 +1,32 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * The OpenSearch Contributors require contributions made to
+ * this file be licensed under the Apache-2.0 license or a
+ * compatible open source license.
+ *
+ * Modifications Copyright OpenSearch Contributors. See
+ * GitHub history for details.
+ */
+
+syntax = "proto3";
+package org.opensearch.action.admin.cluster.node.info.proto;
+
+import "org/opensearch/action/admin/cluster/node/info/NodesInfoProto.proto";
+
+option java_outer_classname = "NodesInfoProtoService";
+
+message NodesInfoRequest {
+  repeated string requestedMetrics = 1;
+  string timeout = 2;
+}
+
+message NodesInfoResponse {
+  string clusterName = 1;
+  repeated NodesInfo nodesInfo = 2;
+}
+
+service NodesInfoService {
+  rpc GetNodesInfo(NodesInfoRequest) returns (NodesInfoResponse) {}
+  rpc StreamNodesInfo(NodesInfoRequest) returns (stream NodesInfoResponse) {}
+}

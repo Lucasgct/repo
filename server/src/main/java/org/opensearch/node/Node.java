@@ -145,6 +145,7 @@ import org.opensearch.gateway.PersistedClusterStateService;
 import org.opensearch.gateway.ShardsBatchGatewayAllocator;
 import org.opensearch.gateway.remote.RemoteClusterStateCleanupManager;
 import org.opensearch.gateway.remote.RemoteClusterStateService;
+import org.opensearch.grpc.GrpcServerTransport;
 import org.opensearch.http.HttpServerTransport;
 import org.opensearch.identity.IdentityService;
 import org.opensearch.index.IndexModule;
@@ -313,6 +314,7 @@ import java.util.stream.Stream;
 
 import static java.util.stream.Collectors.toList;
 import static org.opensearch.common.util.FeatureFlags.BACKGROUND_TASK_EXECUTION_EXPERIMENTAL;
+import static org.opensearch.common.util.FeatureFlags.GRPC_ENABLE_SETTING;
 import static org.opensearch.common.util.FeatureFlags.TELEMETRY;
 import static org.opensearch.env.NodeEnvironment.collectFileCacheDataPath;
 import static org.opensearch.index.ShardIndexingPressureSettings.SHARD_INDEXING_PRESSURE_ENABLED_ATTRIBUTE_KEY;
@@ -1216,6 +1218,7 @@ public class Node implements Closeable {
                 SearchExecutionStatsCollector.makeWrapper(responseCollectorService)
             );
             final HttpServerTransport httpServerTransport = newHttpTransport(networkModule);
+            final GrpcServerTransport grpcServerTransport = newGrpcTransport(networkModule);
             final IndexingPressureService indexingPressureService = new IndexingPressureService(settings, clusterService);
             // Going forward, IndexingPressureService will have required constructs for exposing listeners/interfaces for plugin
             // development. Then we can deprecate Getter and Setter for IndexingPressureService in ClusterService (#478).
@@ -1357,6 +1360,7 @@ public class Node implements Closeable {
                 circuitBreakerService,
                 scriptService,
                 httpServerTransport,
+                grpcServerTransport,
                 ingestService,
                 clusterService,
                 settingsModule.getSettingsFilter(),
@@ -1493,6 +1497,7 @@ public class Node implements Closeable {
                         .toInstance(new SegmentReplicationSourceService(indicesService, transportService, recoverySettings));
                 }
                 b.bind(HttpServerTransport.class).toInstance(httpServerTransport);
+                b.bind(GrpcServerTransport.class).toInstance(grpcServerTransport);
                 pluginComponents.stream().forEach(p -> b.bind((Class) p.getClass()).toInstance(p));
                 b.bind(PersistentTasksService.class).toInstance(persistentTasksService);
                 b.bind(PersistentTasksClusterService.class).toInstance(persistentTasksClusterService);
@@ -1767,11 +1772,19 @@ public class Node implements Closeable {
 
         injector.getInstance(HttpServerTransport.class).start();
 
+        if (FeatureFlags.isEnabled(GRPC_ENABLE_SETTING)) {
+            injector.getInstance(GrpcServerTransport.class).start();
+        }
+
         if (WRITE_PORTS_FILE_SETTING.get(settings())) {
             TransportService transport = injector.getInstance(TransportService.class);
             writePortsFile("transport", transport.boundAddress());
             HttpServerTransport http = injector.getInstance(HttpServerTransport.class);
             writePortsFile("http", http.boundAddress());
+            if (FeatureFlags.isEnabled(GRPC_ENABLE_SETTING)) {
+                GrpcServerTransport grpc = injector.getInstance(GrpcServerTransport.class);
+                writePortsFile("grpc", grpc.boundAddress());
+            }
         }
 
         logger.info("started");
@@ -2111,6 +2124,11 @@ public class Node implements Closeable {
     /** Constructs a {@link org.opensearch.http.HttpServerTransport} which may be mocked for tests. */
     protected HttpServerTransport newHttpTransport(NetworkModule networkModule) {
         return networkModule.getHttpServerTransportSupplier().get();
+    }
+
+    /** Constructs a {@link org.opensearch.grpc.GrpcServerTransport} which may be mocked for tests. */
+    protected GrpcServerTransport newGrpcTransport(NetworkModule networkModule) {
+        return networkModule.getGrpcServerTransportSupplier().get();
     }
 
     private static class LocalNodeFactory implements Function<BoundTransportAddress, DiscoveryNode> {
