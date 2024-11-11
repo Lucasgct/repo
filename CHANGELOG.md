@@ -25,6 +25,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Bump `me.champeau.gradle.japicmp` from 0.4.4 to 0.4.5 ([#16614](https://github.com/opensearch-project/OpenSearch/pull/16614))
 
 ### Changed
+- Add Open Parameters to Flat_object Field Type ([#13853](https://github.com/opensearch-project/OpenSearch/pull/13853))
 
 ### Deprecated
 
